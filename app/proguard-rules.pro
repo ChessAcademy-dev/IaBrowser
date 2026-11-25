@@ -1,0 +1,4 @@
+-keepattributes *Annotation*
+-keep class kotlinx.serialization.** { *; }
+-keepclassmembers class com.aegis.browser.model.** { *; }
+-keepclassmembers class com.aegis.browser.crypto.** { *; }
