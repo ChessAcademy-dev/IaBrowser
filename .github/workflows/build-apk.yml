@@ -23,12 +23,21 @@ jobs:
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+
+      - name: Ensure Gradle wrapper exists
+        run: |
+          if [ ! -f ./gradlew ]; then
+            gradle wrapper --gradle-version 8.10.2 --distribution-type bin
+          fi
+          chmod +x ./gradlew
 
       - name: Run unit tests (Blocker & E2EE Crypto)
-        run: gradle testDebugUnitTest --stacktrace
+        run: ./gradlew testDebugUnitTest --stacktrace
 
       - name: Assemble Debug & Release APKs
-        run: gradle assembleDebug assembleRelease --stacktrace
+        run: ./gradlew assembleDebug assembleRelease --stacktrace
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
