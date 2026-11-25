@@ -2,7 +2,9 @@ package com.aegis.browser
 
 import com.aegis.browser.browser.AdBlockerEngine
 import com.aegis.browser.browser.UrlValidator
-import org.junit.Assert.*
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AdBlockerEngineTest {
@@ -13,7 +15,7 @@ class AdBlockerEngineTest {
         assertTrue(engine.shouldBlockRequest("https://stats.g.doubleclick.net/r/collect", "example.com"))
         assertTrue(engine.shouldBlockRequest("https://www.google-analytics.com/analytics.js", "example.com"))
         assertTrue(engine.shouldBlockRequest("https://connect.facebook.net/en_US/fbevents.js", "news.org"))
-        assertEquals(3, engine.totalBlockedCount.get())
+        assertEquals(3L, engine.totalBlockedCount.get().toLong())
     }
 
     @Test
