@@ -63,7 +63,10 @@ fun VaultSheet(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     Icon(
                         imageVector = if (state.isVaultUnlocked) Icons.Default.LockOpen else Icons.Default.Lock,
                         contentDescription = null,
@@ -108,7 +111,10 @@ fun VaultSheet(
                 )
                 OutlinedTextField(
                     value = passphrase,
-                    onValueChange = { passphrase = it; errorMsg = null },
+                    onValueChange = {
+                        passphrase = it
+                        errorMsg = null
+                    },
                     label = { Text("Vault Passphrase") },
                     visualTransformation = PasswordVisualTransformation(),
                     singleLine = true,
@@ -120,7 +126,11 @@ fun VaultSheet(
                 Button(
                     onClick = {
                         onUnlock(passphrase) { ok, err ->
-                            if (ok) passphrase = "" else errorMsg = err
+                            if (ok) {
+                                passphrase = ""
+                            } else {
+                                errorMsg = err
+                            }
                         }
                     },
                     modifier = Modifier.fillMaxWidth(),
@@ -143,7 +153,10 @@ fun VaultSheet(
 
                 when (selectedSection) {
                     0 -> {
-                        LazyColumn(modifier = Modifier.heightIn(max = 260.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        LazyColumn(
+                            modifier = Modifier.heightIn(max = 260.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
                             items(state.bookmarks, key = { it.url }) { bm ->
                                 Surface(
                                     color = SurfaceElevated,
@@ -151,18 +164,36 @@ fun VaultSheet(
                                     shape = RoundedCornerShape(6.dp),
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .clickable { onNavigateUrl(bm.url); onDismiss() }
+                                        .clickable {
+                                            onNavigateUrl(bm.url)
+                                            onDismiss()
+                                        }
                                 ) {
                                     Column(modifier = Modifier.padding(10.dp)) {
-                                        Text(bm.title, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = TextPrimary, maxLines = 1)
-                                        Text(bm.url, fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = TextSecondary, maxLines = 1)
+                                        Text(
+                                            bm.title,
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontSize = 13.sp,
+                                            color = TextPrimary,
+                                            maxLines = 1
+                                        )
+                                        Text(
+                                            bm.url,
+                                            fontFamily = FontFamily.Monospace,
+                                            fontSize = 11.sp,
+                                            color = TextSecondary,
+                                            maxLines = 1
+                                        )
                                     }
                                 }
                             }
                         }
                     }
                     1 -> {
-                        LazyColumn(modifier = Modifier.heightIn(max = 260.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        LazyColumn(
+                            modifier = Modifier.heightIn(max = 260.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
                             items(state.history) { item ->
                                 Surface(
                                     color = SurfaceElevated,
@@ -170,11 +201,20 @@ fun VaultSheet(
                                     shape = RoundedCornerShape(6.dp),
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .clickable { onNavigateUrl(item.url); onDismiss() }
+                                        .clickable {
+                                            onNavigateUrl(item.url)
+                                            onDismiss()
+                                        }
                                 ) {
                                     Column(modifier = Modifier.padding(10.dp)) {
                                         Text(item.title, fontSize = 13.sp, color = TextPrimary, maxLines = 1)
-                                        Text(item.url, fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = TextSecondary, maxLines = 1)
+                                        Text(
+                                            item.url,
+                                            fontFamily = FontFamily.Monospace,
+                                            fontSize = 11.sp,
+                                            color = TextSecondary,
+                                            maxLines = 1
+                                        )
                                     }
                                 }
                             }
@@ -206,7 +246,10 @@ fun VaultSheet(
                                 Text("Save")
                             }
                         }
-                        LazyColumn(modifier = Modifier.heightIn(max = 180.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        LazyColumn(
+                            modifier = Modifier.heightIn(max = 180.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
                             items(state.notes, key = { it.id }) { note ->
                                 Surface(
                                     color = SurfaceElevated,
@@ -214,16 +257,27 @@ fun VaultSheet(
                                     shape = RoundedCornerShape(6.dp)
                                 ) {
                                     Row(
-                                        modifier = Modifier.fillMaxWidth().padding(10.dp),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(10.dp),
                                         horizontalArrangement = Arrangement.SpaceBetween,
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Column(modifier = Modifier.weight(1f)) {
-                                            Text(note.title, fontWeight = FontWeight.Bold, fontSize = 13.sp, color = TextPrimary)
+                                            Text(
+                                                note.title,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 13.sp,
+                                                color = TextPrimary
+                                            )
                                             Text(note.body, fontSize = 12.sp, color = TextSecondary)
                                         }
                                         IconButton(onClick = { onDeleteNote(note.id) }) {
-                                            Icon(Icons.Default.Delete, contentDescription = "Delete note", tint = TextSecondary)
+                                            Icon(
+                                                Icons.Default.Delete,
+                                                contentDescription = "Delete note",
+                                                tint = TextSecondary
+                                            )
                                         }
                                     }
                                 }
