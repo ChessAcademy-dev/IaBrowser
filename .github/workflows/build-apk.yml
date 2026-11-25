@@ -200,7 +200,7 @@ jobs:
         working-directory: ${{ env.PROJ_DIR }}
         run: |
           for attempt in 1 2 3; do
-            if gradle :app:testDebugUnitTest --stacktrace; then
+            if gradle :app:testDebugUnitTest --no-daemon --stacktrace; then
               exit 0
             fi
             echo "Attempt $attempt failed, retrying in 15s..."
@@ -212,7 +212,7 @@ jobs:
         working-directory: ${{ env.PROJ_DIR }}
         run: |
           for attempt in 1 2 3; do
-            if gradle :app:assembleDebug :app:assembleRelease --stacktrace; then
+            if gradle :app:assembleDebug :app:assembleRelease --no-daemon --stacktrace; then
               exit 0
             fi
             echo "Attempt $attempt failed, retrying in 15s..."
@@ -220,16 +220,24 @@ jobs:
           done
           exit 1
 
+      - name: Collect single APK files
+        run: |
+          mkdir -p apk-dist
+          DEBUG_APK=$(find "${{ env.PROJ_DIR }}/app/build/outputs/apk/debug" -name "*.apk" | head -n 1)
+          RELEASE_APK=$(find "${{ env.PROJ_DIR }}/app/build/outputs/apk/release" -name "*.apk" | head -n 1)
+          cp "$DEBUG_APK" "apk-dist/Aegis-debug.apk"
+          cp "$RELEASE_APK" "apk-dist/Aegis-release.apk"
+
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: aegis-browser-debug-apk
-          path: "**/app/build/outputs/apk/debug/*.apk"
+          name: Aegis-debug
+          path: apk-dist/Aegis-debug.apk
           if-no-files-found: error
 
       - name: Upload Release APK
         uses: actions/upload-artifact@v4
         with:
-          name: aegis-browser-release-apk
-          path: "**/app/build/outputs/apk/release/*.apk"
+          name: Aegis-release
+          path: apk-dist/Aegis-release.apk
           if-no-files-found: error
