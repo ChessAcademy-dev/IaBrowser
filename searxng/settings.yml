@@ -1,18 +1,32 @@
-services:
-  searxng:
-    image: docker.io/searxng/searxng:latest
-    container_name: aegis-searxng
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:8080:8080"
-    volumes:
-      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
-      - ./searxng/limiter.toml:/etc/searxng/limiter.toml:ro
-    environment:
-      - SEARXNG_BASE_URL=https://searx.aegis.local/
-    cap_drop:
-      - ALL
-    cap_add:
-      - CHOWN
-      - SETGID
-      - SETUID
+# searxng/settings.yml (Schlankes Setup ohne Ads/Telemetry, JSON & HTML aktiviert)
+use_default_settings: true
+
+server:
+  secret_key: "CHANGE_THIS_TO_A_RANDOM_64_CHAR_HEX_STRING"
+  limiter: true
+  image_proxy: true
+
+ui:
+  static_use_hash: true
+  default_theme: simple
+  query_in_title: false
+  infinite_scroll: false
+
+search:
+  safe_search: 0
+  autocomplete: ""
+  formats:
+    - html
+    - json
+
+engines:
+  - name: duckduckgo
+    disabled: false
+  - name: brave
+    disabled: false
+  - name: mojee
+    disabled: false
+  - name: github
+    disabled: false
+  - name: stackoverflow
+    disabled: false
