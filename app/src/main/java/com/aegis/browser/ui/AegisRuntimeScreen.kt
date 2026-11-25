@@ -1033,4 +1033,145 @@ private fun AddressCapsuleBar(
                     .pointerInput(tabCount) {
                         var acc = 0f
                         detectHorizontalDragGestures(
-                            on
+                            onDragEnd = { acc = 0f },
+                            onHorizontalDrag = { _, delta ->
+                                acc += delta
+                                if (acc > 55f) {
+                                    acc = 0f
+                                    onSwipeTabStep(-1)
+                                } else if (acc < -55f) {
+                                    acc = 0f
+                                    onSwipeTabStep(1)
+                                }
+                            }
+                        )
+                    }
+                    .padding(horizontal = 7.dp, vertical = 4.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "$activeTabNumber/$tabCount",
+                    fontFamily = MonoFont,
+                    fontSize = 11.sp,
+                    color = AegisColors.TextPrimary
+                )
+            }
+
+            Spacer(modifier = Modifier.width(8.dp))
+
+            Icon(
+                imageVector = Icons.Outlined.SwapVert,
+                contentDescription = if (isBottomBar) "Leiste nach oben" else "Leiste nach unten",
+                tint = AegisColors.TextMuted,
+                modifier = Modifier
+                    .size(17.dp)
+                    .clickable { onToggleBarPosition() }
+            )
+        }
+    }
+}
+
+@Composable
+private fun ShieldOverlayContent(
+    globalShieldEnabled: Boolean,
+    siteShieldEnabled: Boolean,
+    currentHost: String,
+    blockedCount: Int,
+    blockedDomains: List<String>,
+    onToggleGlobal: (Boolean) -> Unit,
+    onToggleSite: (Boolean) -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text(
+            text = "AEGIS SHIELD // OVERLAY",
+            fontFamily = MonoFont,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Bold,
+            color = AegisColors.EmeraldBright
+        )
+        Text(
+            text = "Geblockt auf $currentHost: $blockedCount",
+            fontFamily = MonoFont,
+            fontSize = 12.sp,
+            color = AegisColors.TextSecondary
+        )
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Site-Schutz ($currentHost)",
+                fontFamily = MonoFont,
+                fontSize = 12.sp,
+                color = AegisColors.TextPrimary
+            )
+            Switch(
+                checked = siteShieldEnabled,
+                onCheckedChange = onToggleSite,
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = AegisColors.OledBlack,
+                    checkedTrackColor = AegisColors.EmeraldPrimary
+                )
+            )
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Globaler Tracker-Blocker",
+                fontFamily = MonoFont,
+                fontSize = 12.sp,
+                color = AegisColors.TextPrimary
+            )
+            Switch(
+                checked = globalShieldEnabled,
+                onCheckedChange = onToggleGlobal,
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = AegisColors.OledBlack,
+                    checkedTrackColor = AegisColors.EmeraldPrimary
+                )
+            )
+        }
+
+        if (blockedDomains.isNotEmpty()) {
+            HorizontalDivider(color = AegisColors.BorderSubtle)
+            Text(
+                text = "GEBLOCKTE DOMAINS",
+                fontFamily = MonoFont,
+                fontSize = 11.sp,
+                color = AegisColors.TextMuted
+            )
+            blockedDomains.distinct().take(12).forEach { domain ->
+                Text(
+                    text = "• $domain",
+                    fontFamily = MonoFont,
+                    fontSize = 11.sp,
+                    color = AegisColors.EmeraldBright
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(16.dp))
+    }
+}
+
+private val DefaultTrackerHosts = setOf(
+    "doubleclick.net", "google-analytics.com", "googletagmanager.com",
+    "facebook.net", "fbevents.com", "hotjar.com", "clarity.ms",
+    "segment.io", "mixpanel.com", "appsflyer.com", "adjust.com"
+)
+
+fun isKnownTrackerHost(host: String): Boolean {
+    val clean = host.lowercase().removePrefix("www.")
+    if (clean.isBlank()) return false
+    return DefaultTrackerHosts.any { clean == it || clean.endsWith(".$it") }
+}
