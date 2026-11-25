@@ -6,6 +6,7 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import java.io.ByteArrayInputStream
+import java.net.URI
 
 class SafeWebViewClient(
     private val blocker: AdBlockerEngine,
@@ -16,11 +17,42 @@ class SafeWebViewClient(
     private val onSecurityBlock: (String) -> Unit
 ) : WebViewClient() {
 
+    private val allowedSchemes = setOf("https", "http", "about")
+    private val blockedSchemes = setOf(
+        "javascript", "data", "vbscript", "file", "content", "intent", "blob"
+    )
+
     private val emptyResponse = WebResourceResponse(
         "text/plain",
         "UTF-8",
         ByteArrayInputStream(ByteArray(0))
     )
+
+    private fun checkNavigationUrl(rawUrl: String): String? {
+        val trimmed = rawUrl.trim()
+        if (trimmed == "about:blank") return null
+
+        val lower = trimmed.lowercase()
+        for (scheme in blockedSchemes) {
+            if (lower.startsWith("$scheme:")) {
+                return "Blocked unsafe scheme: $scheme"
+            }
+        }
+
+        return try {
+            val uri = URI(trimmed)
+            val scheme = uri.scheme?.lowercase() ?: return "Missing URL scheme"
+            if (scheme !in allowedSchemes) {
+                return "Blocked scheme: $scheme"
+            }
+            if ((scheme == "http" || scheme == "https") && uri.host.isNullOrBlank()) {
+                return "Malformed host"
+            }
+            null
+        } catch (_: Exception) {
+            "Invalid URI syntax"
+        }
+    }
 
     override fun shouldInterceptRequest(
         view: WebView?,
@@ -42,23 +74,18 @@ class SafeWebViewClient(
     ): Boolean {
         val rawUrl = request?.url?.toString() ?: return true
 
-        // 1. Validate URL scheme (blocks javascript:, file:, intent:, data:, etc.)
-        when (val validation = UrlValidator.validateNavigationUrl(rawUrl)) {
-            is UrlValidator.ValidationResult.Blocked -> {
-                onSecurityBlock(validation.reason)
-                return true
-            }
-            is UrlValidator.ValidationResult.Allowed -> Unit
+        val blockReason = checkNavigationUrl(rawUrl)
+        if (blockReason != null) {
+            onSecurityBlock(blockReason)
+            return true
         }
 
-        // 2. Block unwanted popup / ad-redirect navigations
         val pageHost = getCurrentPageHost()
         if (blocker.shouldBlockRequest(rawUrl, pageHost)) {
             onBlockedEvent()
             return true
         }
 
-        // 3. Strip click-tracking query parameters on top-level navigation
         if (request.isForMainFrame) {
             val cleaned = blocker.stripTrackingParameters(rawUrl)
             if (cleaned != rawUrl) {
