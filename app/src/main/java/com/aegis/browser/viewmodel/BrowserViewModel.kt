@@ -11,101 +11,170 @@ import com.aegis.browser.model.BrowserTab
 import com.aegis.browser.model.EncryptedNote
 import com.aegis.browser.model.HistoryItem
 import com.aegis.browser.model.VaultPayload
+import com.aegis.browser.search.AegisSearchClient
+import com.aegis.browser.search.SearchCategory
+import com.aegis.browser.search.SearchEngineOption
+import com.aegis.browser.ui.RuntimeUiState
+import com.aegis.browser.ui.stripTrackingQueryParams
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-data class BrowserUiState(
-    val tabs: List<BrowserTab> = listOf(BrowserTab()),
-    val activeTabIndex: Int = 0,
-    val addressBarInput: String = "",
-    val isLoading: Boolean = false,
-    val pageProgress: Float = 0f,
-    val canGoBack: Boolean = false,
-    val canGoForward: Boolean = false,
-    val globalShieldEnabled: Boolean = true,
-    val totalBlockedRequests: Int = 0,
-    val currentSiteBlockedRequests: Int = 0,
-    val isCurrentSiteProtected: Boolean = true,
-    val customBlocklist: Set<String> = emptySet(),
-    val allowlist: Set<String> = emptySet(),
-    val isVaultUnlocked: Boolean = false,
-    val vaultExistsOnDisk: Boolean = false,
-    val keyFingerprint: String = "",
-    val bookmarks: List<BookmarkItem> = emptyList(),
-    val history: List<HistoryItem> = emptyList(),
-    val notes: List<EncryptedNote> = emptyList(),
-    val statusBanner: String? = null
-) {
-    val activeTab: BrowserTab
-        get() = tabs.getOrElse(activeTabIndex) { BrowserTab() }
-}
-
 class BrowserViewModel(application: Application) : AndroidViewModel(application) {
 
     val adBlocker = AdBlockerEngine()
+    private val searchClient = AegisSearchClient()
     private val encryptedStore: EncryptedStore? = runCatching {
         EncryptedStore(application)
     }.getOrNull()
+
     private var activePassphrase: CharArray? = null
+    private var searchJob: Job? = null
+    private val blockedHostsPerUrl = mutableMapOf<String, MutableSet<String>>()
 
     private val initialVaultExists: Boolean = runCatching {
         encryptedStore?.vaultExists() ?: false
     }.getOrDefault(false)
 
     private val initialFingerprint: String = runCatching {
-        encryptedStore?.getKeyFingerprint() ?: ""
+        encryptedStore?.getKeyFingerprint()?.take(12) ?: ""
     }.getOrDefault("")
 
-    private val initialBanner: String? = if (encryptedStore == null) {
-        "Vault storage unavailable on startup"
-    } else {
-        null
-    }
-
     private val _uiState = MutableStateFlow(
-        BrowserUiState(
-            vaultExistsOnDisk = initialVaultExists,
-            keyFingerprint = initialFingerprint,
-            statusBanner = initialBanner
+        RuntimeUiState(
+            vaultExistsOnDisk = false,
+            vaultKeyLabel = if (initialFingerprint.isNotBlank()) {
+                "KEY ${initialFingerprint.uppercase()}"
+            } else if (initialVaultExists) {
+                "VAULT LOCKED"
+            } else {
+                "X25519 READY"
+            },
+            statusMessage = if (encryptedStore == null) {
+                "Vault storage fallback active"
+            } else {
+                null
+            }
         )
     )
-    val uiState: StateFlow<BrowserUiState> = _uiState.asStateFlow()
+    val uiState: StateFlow<RuntimeUiState> = _uiState.asStateFlow()
 
     fun onAddressInputChange(value: String) {
-        _uiState.update { it.copy(addressBarInput = value) }
+        _uiState.update { it.copy(addressInput = value) }
     }
 
-    fun navigateToInput(rawInput: String) {
-        val normalized = UrlValidator.normalizeUserInput(rawInput)
-        val cleaned = adBlocker.stripTrackingParameters(normalized)
-        when (val result = UrlValidator.validateNavigationUrl(cleaned)) {
+    fun setEditingAddress(editing: Boolean) {
+        _uiState.update { state ->
+            val currentUrl = state.tabs.getOrElse(state.activeTabIndex) { BrowserTab() }.url
+            state.copy(
+                isEditingAddress = editing,
+                addressInput = if (editing && currentUrl != "about:blank") {
+                    currentUrl
+                } else {
+                    state.addressInput
+                }
+            )
+        }
+    }
+
+    fun clearAddressInput() {
+        _uiState.update { it.copy(addressInput = "", isEditingAddress = true) }
+    }
+
+    fun toggleBarPosition() {
+        _uiState.update { it.copy(isBottomBar = !it.isBottomBar) }
+    }
+
+    fun selectEngine(option: SearchEngineOption) {
+        _uiState.update { it.copy(selectedEngine = option) }
+        val currentInput = _uiState.value.addressInput.trim()
+        if (currentInput.isNotEmpty() && !currentInput.contains(".") && !currentInput.startsWith("http")) {
+            runNativeSearch(currentInput, option, _uiState.value.selectedCategory)
+        }
+    }
+
+    fun selectCategory(category: SearchCategory) {
+        _uiState.update { it.copy(selectedCategory = category) }
+        val currentInput = _uiState.value.addressInput.trim()
+        if (currentInput.isNotEmpty() && !currentInput.contains(".") && !currentInput.startsWith("http")) {
+            runNativeSearch(currentInput, _uiState.value.selectedEngine, category)
+        }
+    }
+
+    fun submitAddressOrQuery(rawInput: String) {
+        val trimmed = rawInput.trim()
+        if (trimmed.isEmpty()) return
+
+        val cleanedInput = stripTrackingQueryParams(trimmed)
+        val looksLikeUrl = cleanedInput.startsWith("http://", ignoreCase = true) ||
+            cleanedInput.startsWith("https://", ignoreCase = true) ||
+            (!cleanedInput.contains(" ") && cleanedInput.contains(".") && !cleanedInput.startsWith("."))
+
+        if (!looksLikeUrl) {
+            val state = _uiState.value
+            runNativeSearch(trimmed, state.selectedEngine, state.selectedCategory)
+            val fallbackUrl = searchClient.buildDirectBrowserUrl(
+                query = trimmed,
+                option = state.selectedEngine,
+                category = state.selectedCategory
+            )
+            navigateToCleanedUrl(fallbackUrl, keepSearchResults = true)
+            return
+        }
+
+        val normalized = UrlValidator.normalizeUserInput(cleanedInput)
+        val stripped = adBlocker.stripTrackingParameters(normalized)
+        navigateToCleanedUrl(stripped, keepSearchResults = false)
+    }
+
+    private fun navigateToCleanedUrl(url: String, keepSearchResults: Boolean) {
+        when (val result = UrlValidator.validateNavigationUrl(url)) {
             is UrlValidator.ValidationResult.Blocked -> {
-                _uiState.update { it.copy(statusBanner = result.reason) }
+                _uiState.update { it.copy(statusMessage = result.reason) }
             }
             is UrlValidator.ValidationResult.Allowed -> {
-                updateActiveTab { it.copy(url = result.normalizedUrl) }
-                _uiState.update {
-                    it.copy(
-                        addressBarInput = if (result.normalizedUrl == "about:blank") "" else result.normalizedUrl,
-                        statusBanner = null
+                val clean = stripTrackingQueryParams(result.normalizedUrl)
+                updateActiveTab { it.copy(url = clean) }
+                _uiState.update { state ->
+                    state.copy(
+                        addressInput = if (clean == "about:blank") "" else clean,
+                        isEditingAddress = false,
+                        nativeSearchResults = if (keepSearchResults) state.nativeSearchResults else emptyList(),
+                        statusMessage = null
                     )
                 }
             }
         }
     }
 
+    private fun runNativeSearch(
+        query: String,
+        option: SearchEngineOption,
+        category: SearchCategory
+    ) {
+        searchJob?.cancel()
+        searchJob = viewModelScope.launch {
+            val results = searchClient.searchJson(query = query, category = category)
+            _uiState.update { it.copy(nativeSearchResults = results) }
+        }
+    }
+
     fun onPageUrlChanged(url: String) {
-        val host = UrlValidator.extractHost(url)
-        updateActiveTab { it.copy(url = url) }
-        _uiState.update {
-            it.copy(
-                addressBarInput = if (url == "about:blank") "" else url,
-                isCurrentSiteProtected = adBlocker.isSiteProtected(host),
-                currentSiteBlockedRequests = adBlocker.getBlockedCountForSite(host)
+        val clean = stripTrackingQueryParams(url)
+        val host = UrlValidator.extractHost(clean)
+        updateActiveTab { it.copy(url = clean) }
+        val blockedSet = blockedHostsPerUrl[clean].orEmpty()
+        _uiState.update { state ->
+            state.copy(
+                addressInput = if (clean == "about:blank") "" else clean,
+                isEditingAddress = false,
+                currentSiteShieldEnabled = adBlocker.isSiteProtected(host),
+                currentSiteBlockedCount = blockedSet.size,
+                blockedDomainsOnPage = blockedSet.toList()
             )
         }
     }
@@ -114,91 +183,52 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         val currentUrl = _uiState.value.activeTab.url
         updateActiveTab { it.copy(title = title) }
         if (currentUrl != "about:blank" && _uiState.value.isVaultUnlocked) {
-            val newEntry = HistoryItem(title = title, url = currentUrl)
+            val entry = HistoryItem(title = title, url = currentUrl)
             _uiState.update { state ->
-                val updatedHistory = (listOf(newEntry) + state.history).take(200)
-                state.copy(history = updatedHistory)
+                state.copy(history = (listOf(entry) + state.history).take(200))
             }
             persistVaultAsync()
         }
     }
 
-    fun onNavigationStateChanged(canBack: Boolean, canForward: Boolean, progress: Int) {
+    fun onProgressChanged(progress: Int, canBack: Boolean, canForward: Boolean) {
         _uiState.update {
             it.copy(
-                canGoBack = canBack,
-                canGoForward = canForward,
                 isLoading = progress in 1..99,
-                pageProgress = progress / 100f
+                canGoBack = canBack,
+                canGoForward = canForward
             )
         }
     }
 
-    fun onRequestBlocked() {
-        val host = UrlValidator.extractHost(_uiState.value.activeTab.url)
-        _uiState.update {
-            it.copy(
-                totalBlockedRequests = adBlocker.totalBlockedCount.get(),
-                currentSiteBlockedRequests = adBlocker.getBlockedCountForSite(host)
-            )
-        }
-    }
+    fun onRequestBlocked(blockedHost: String) {
+        adBlocker.totalBlockedCount.incrementAndGet()
+        val activeUrl = _uiState.value.activeTab.url
+        val set = blockedHostsPerUrl.getOrPut(activeUrl) { linkedSetOf() }
+        set.add(blockedHost)
 
-    fun onSecurityBlock(reason: String) {
-        _uiState.update { it.copy(statusBanner = reason) }
-    }
-
-    fun clearStatusBanner() {
-        _uiState.update { it.copy(statusBanner = null) }
-    }
-
-    fun toggleGlobalShield() {
-        val next = !adBlocker.globalEnabled.get()
-        adBlocker.globalEnabled.set(next)
-        val host = UrlValidator.extractHost(_uiState.value.activeTab.url)
-        _uiState.update {
-            it.copy(
-                globalShieldEnabled = next,
-                isCurrentSiteProtected = adBlocker.isSiteProtected(host)
-            )
-        }
-    }
-
-    fun toggleCurrentSiteShield() {
-        val host = UrlValidator.extractHost(_uiState.value.activeTab.url)
-        if (host.isEmpty()) return
-        val protectedNow = adBlocker.toggleSiteAllowlist(host)
-        _uiState.update {
-            it.copy(
-                isCurrentSiteProtected = protectedNow,
-                allowlist = adBlocker.getAllowlist()
-            )
-        }
-        persistVaultAsync()
-    }
-
-    fun addCustomBlockDomain(domain: String) {
-        adBlocker.addCustomBlockDomain(domain)
-        _uiState.update { it.copy(customBlocklist = adBlocker.getCustomBlocklist()) }
-        persistVaultAsync()
-    }
-
-    fun removeCustomBlockDomain(domain: String) {
-        adBlocker.removeCustomBlockDomain(domain)
-        _uiState.update { it.copy(customBlocklist = adBlocker.getCustomBlocklist()) }
-        persistVaultAsync()
-    }
-
-    fun addTab(url: String = "about:blank") {
-        val newTab = BrowserTab(url = url)
         _uiState.update { state ->
-            val updated = state.tabs + newTab
             state.copy(
-                tabs = updated,
-                activeTabIndex = updated.lastIndex,
-                addressBarInput = if (url == "about:blank") "" else url
+                totalBlockedCount = state.totalBlockedCount + 1,
+                currentSiteBlockedCount = set.size,
+                blockedDomainsOnPage = set.toList()
             )
         }
+    }
+
+    fun setGlobalShieldEnabled(enabled: Boolean) {
+        adBlocker.globalEnabled.set(enabled)
+        _uiState.update { it.copy(globalShieldEnabled = enabled) }
+    }
+
+    fun setCurrentSiteShieldEnabled(enabled: Boolean) {
+        val host = UrlValidator.extractHost(_uiState.value.activeTab.url)
+        if (host.isBlank()) return
+        val currentlyProtected = adBlocker.isSiteProtected(host)
+        if (currentlyProtected != enabled) {
+            adBlocker.toggleSiteAllowlist(host)
+        }
+        _uiState.update { it.copy(currentSiteShieldEnabled = enabled) }
         persistVaultAsync()
     }
 
@@ -207,11 +237,14 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             if (index !in state.tabs.indices) return@update state
             val tab = state.tabs[index]
             val host = UrlValidator.extractHost(tab.url)
+            val blocked = blockedHostsPerUrl[tab.url].orEmpty()
             state.copy(
                 activeTabIndex = index,
-                addressBarInput = if (tab.url == "about:blank") "" else tab.url,
-                isCurrentSiteProtected = adBlocker.isSiteProtected(host),
-                currentSiteBlockedRequests = adBlocker.getBlockedCountForSite(host)
+                addressInput = if (tab.url == "about:blank") "" else tab.url,
+                isEditingAddress = false,
+                currentSiteShieldEnabled = adBlocker.isSiteProtected(host),
+                currentSiteBlockedCount = blocked.size,
+                blockedDomainsOnPage = blocked.toList()
             )
         }
     }
@@ -219,102 +252,100 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     fun closeTab(index: Int) {
         _uiState.update { state ->
             if (state.tabs.size <= 1) {
-                val reset = listOf(BrowserTab())
-                state.copy(tabs = reset, activeTabIndex = 0, addressBarInput = "")
+                state.copy(
+                    tabs = listOf(BrowserTab(url = "about:blank")),
+                    activeTabIndex = 0,
+                    addressInput = "",
+                    isEditingAddress = false,
+                    currentSiteBlockedCount = 0,
+                    blockedDomainsOnPage = emptyList()
+                )
             } else {
                 val updated = state.tabs.filterIndexed { i, _ -> i != index }
-                val newIndex = state.activeTabIndex.coerceAtMost(updated.lastIndex)
-                val active = updated[newIndex]
+                val newIdx = state.activeTabIndex.coerceAtMost(updated.lastIndex)
+                val active = updated[newIdx]
+                val blocked = blockedHostsPerUrl[active.url].orEmpty()
                 state.copy(
                     tabs = updated,
-                    activeTabIndex = newIndex,
-                    addressBarInput = if (active.url == "about:blank") "" else active.url
+                    activeTabIndex = newIdx,
+                    addressInput = if (active.url == "about:blank") "" else active.url,
+                    isEditingAddress = false,
+                    currentSiteBlockedCount = blocked.size,
+                    blockedDomainsOnPage = blocked.toList()
                 )
             }
         }
         persistVaultAsync()
     }
 
-    fun toggleBookmarkCurrentPage() {
-        val tab = _uiState.value.activeTab
-        if (tab.url == "about:blank") return
-        if (!_uiState.value.isVaultUnlocked) {
-            _uiState.update { it.copy(statusBanner = "Unlock E2EE vault to save encrypted bookmarks") }
-            return
-        }
+    fun newTab(url: String = "about:blank") {
+        val clean = stripTrackingQueryParams(url)
         _uiState.update { state ->
-            val exists = state.bookmarks.any { it.url == tab.url }
-            val updated = if (exists) {
-                state.bookmarks.filterNot { it.url == tab.url }
-            } else {
-                listOf(BookmarkItem(title = tab.title.ifBlank { tab.url }, url = tab.url)) + state.bookmarks
-            }
-            state.copy(bookmarks = updated)
+            val updated = state.tabs + BrowserTab(url = clean)
+            state.copy(
+                tabs = updated,
+                activeTabIndex = updated.lastIndex,
+                addressInput = if (clean == "about:blank") "" else clean,
+                isEditingAddress = false,
+                currentSiteBlockedCount = 0,
+                blockedDomainsOnPage = emptyList()
+            )
         }
         persistVaultAsync()
     }
 
-    fun addEncryptedNote(title: String, body: String) {
-        if (!_uiState.value.isVaultUnlocked || title.isBlank()) return
-        val note = EncryptedNote(title = title.trim(), body = body.trim())
-        _uiState.update { it.copy(notes = listOf(note) + it.notes) }
+    fun openBookmark(url: String) {
+        navigateToCleanedUrl(stripTrackingQueryParams(url), keepSearchResults = false)
+    }
+
+    fun deleteLocalBookmark(url: String) {
+        _uiState.update { state ->
+            state.copy(localBookmarks = state.localBookmarks.filterNot { it.url == url })
+        }
         persistVaultAsync()
     }
 
-    fun deleteEncryptedNote(id: String) {
-        if (!_uiState.value.isVaultUnlocked) return
-        _uiState.update { it.copy(notes = it.notes.filterNot { n -> n.id == id }) }
-        persistVaultAsync()
-    }
-
-    fun unlockOrInitializeVault(passphraseInput: String, onResult: (Boolean, String?) -> Unit) {
+    fun unlockOrInitVault(passphrase: String, onResult: (Boolean, String?) -> Unit) {
         val store = encryptedStore
         if (store == null) {
-            onResult(false, "Encrypted vault is unavailable on this device")
+            onResult(false, "EncryptedStore auf diesem Gerät nicht verfügbar")
             return
         }
-        if (passphraseInput.length < 8) {
-            onResult(false, "Passphrase must be at least 8 characters")
+        if (passphrase.length < 8) {
+            onResult(false, "Passphrase muss mindestens 8 Zeichen haben")
             return
         }
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val chars = passphraseInput.toCharArray()
-                val loaded = if (store.vaultExists()) {
+                val chars = passphrase.toCharArray()
+                val payload = if (store.vaultExists()) {
                     store.unlockAndLoad(chars)
                 } else {
                     val initial = VaultPayload(
                         tabs = _uiState.value.tabs,
+                        bookmarks = _uiState.value.localBookmarks,
                         customBlocklist = adBlocker.getCustomBlocklist(),
                         allowlist = adBlocker.getAllowlist()
                     )
                     store.saveEncrypted(initial, chars)
                     initial
                 }
-
                 activePassphrase?.fill('\u0000')
                 activePassphrase = chars
+                adBlocker.setRules(payload.customBlocklist, payload.allowlist)
 
-                adBlocker.setRules(loaded.customBlocklist, loaded.allowlist)
-                val restoredTabs = loaded.tabs.ifEmpty { _uiState.value.tabs }
-
+                val fp = runCatching { store.getKeyFingerprint().take(12).uppercase() }.getOrDefault("X25519")
                 _uiState.update { state ->
                     state.copy(
                         isVaultUnlocked = true,
-                        vaultExistsOnDisk = true,
-                        tabs = restoredTabs,
-                        activeTabIndex = 0,
-                        bookmarks = loaded.bookmarks,
-                        history = loaded.history,
-                        notes = loaded.notes,
-                        customBlocklist = loaded.customBlocklist,
-                        allowlist = loaded.allowlist,
-                        statusBanner = null
+                        vaultKeyLabel = "KEY $fp",
+                        localBookmarks = payload.bookmarks,
+                        statusMessage = null
                     )
                 }
                 onResult(true, null)
             } catch (_: Exception) {
-                onResult(false, "Decryption failed: invalid passphrase or tampered ciphertext")
+                onResult(false, "Entschlüsselung fehlgeschlagen (Passphrase prüfen)")
             }
         }
     }
@@ -322,50 +353,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     fun lockVault() {
         activePassphrase?.fill('\u0000')
         activePassphrase = null
-        _uiState.update {
-            it.copy(
-                isVaultUnlocked = false,
-                bookmarks = emptyList(),
-                history = emptyList(),
-                notes = emptyList()
-            )
-        }
-    }
-
-    fun exportCiphertextJson(): String? = runCatching {
-        encryptedStore?.exportCiphertextEnvelope()
-    }.getOrNull()
-
-    fun importCiphertextJson(envelopeJson: String, onResult: (Boolean, String?) -> Unit) {
-        val store = encryptedStore
-        if (store == null) {
-            onResult(false, "Encrypted vault is unavailable on this device")
-            return
-        }
-        val pass = activePassphrase
-        if (pass == null) {
-            onResult(false, "Unlock vault first before importing ciphertext")
-            return
-        }
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                val payload = store.importCiphertextEnvelope(envelopeJson, pass)
-                adBlocker.setRules(payload.customBlocklist, payload.allowlist)
-                _uiState.update {
-                    it.copy(
-                        tabs = payload.tabs.ifEmpty { it.tabs },
-                        bookmarks = payload.bookmarks,
-                        history = payload.history,
-                        notes = payload.notes,
-                        customBlocklist = payload.customBlocklist,
-                        allowlist = payload.allowlist
-                    )
-                }
-                onResult(true, null)
-            } catch (_: Exception) {
-                onResult(false, "Ciphertext verification failed (GCM tag mismatch)")
-            }
-        }
+        _uiState.update { it.copy(isVaultUnlocked = false) }
     }
 
     private fun persistVaultAsync() {
@@ -374,9 +362,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         val snapshot = _uiState.value
         val payload = VaultPayload(
             tabs = snapshot.tabs,
-            bookmarks = snapshot.bookmarks,
-            history = snapshot.history,
-            notes = snapshot.notes,
+            bookmarks = snapshot.localBookmarks,
             customBlocklist = adBlocker.getCustomBlocklist(),
             allowlist = adBlocker.getAllowlist()
         )
@@ -389,9 +375,9 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         _uiState.update { state ->
             val idx = state.activeTabIndex
             if (idx !in state.tabs.indices) return@update state
-            val updated = state.tabs.toMutableList()
-            updated[idx] = transform(updated[idx])
-            state.copy(tabs = updated)
+            val mutable = state.tabs.toMutableList()
+            mutable[idx] = transform(mutable[idx])
+            state.copy(tabs = mutable)
         }
     }
 
