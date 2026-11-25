@@ -1,6 +1,7 @@
 package com.aegis.browser.browser
 
 import java.net.URI
+import java.net.URLEncoder
 
 object UrlValidator {
 
@@ -14,7 +15,10 @@ object UrlValidator {
         data class Blocked(val reason: String) : ValidationResult()
     }
 
-    fun normalizeUserInput(raw: String, searchEngineTemplate: String = "https://duckduckgo.com/?q=%s"): String {
+    fun normalizeUserInput(
+        raw: String,
+        searchEngineTemplate: String = "https://duckduckgo.com/?q=%s"
+    ): String {
         val trimmed = raw.trim()
         if (trimmed.isEmpty() || trimmed == "about:blank") return "about:blank"
 
@@ -37,7 +41,7 @@ object UrlValidator {
         return if (looksLikeDomain) {
             "https://$trimmed"
         } else {
-            val encoded = java.net.URLEncoder.encode(trimmed, "UTF-8")
+            val encoded = URLEncoder.encode(trimmed, "UTF-8")
             searchEngineTemplate.replace("%s", encoded)
         }
     }
