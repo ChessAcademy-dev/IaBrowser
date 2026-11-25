@@ -29,7 +29,6 @@ object UrlValidator {
             return trimmed
         }
 
-        // Check if input looks like a domain (e.g., "example.com" or "sub.domain.org/path")
         val looksLikeDomain = !trimmed.contains(" ") &&
             trimmed.contains(".") &&
             !trimmed.startsWith(".") &&
@@ -61,7 +60,7 @@ object UrlValidator {
             }
 
             ValidationResult.Allowed(trimmed)
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             ValidationResult.Blocked("Invalid URI syntax")
         }
     }
