@@ -78,7 +78,7 @@ fun VaultSheet(
                             color = TextPrimary
                         )
                         Text(
-                            text = "X25519 • ${state.keyFingerprint}",
+                            text = "X25519 • ${state.keyFingerprint.ifBlank { "KEY READY" }}",
                             fontFamily = FontFamily.Monospace,
                             fontSize = 10.sp,
                             color = TextSecondary
@@ -144,7 +144,7 @@ fun VaultSheet(
                 when (selectedSection) {
                     0 -> {
                         LazyColumn(modifier = Modifier.heightIn(max = 260.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            items(state.bookmarks) { bm ->
+                            items(state.bookmarks, key = { it.url }) { bm ->
                                 Surface(
                                     color = SurfaceElevated,
                                     border = BorderStroke(1.dp, BorderHairline),
@@ -207,7 +207,7 @@ fun VaultSheet(
                             }
                         }
                         LazyColumn(modifier = Modifier.heightIn(max = 180.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            items(state.notes) { note ->
+                            items(state.notes, key = { it.id }) { note ->
                                 Surface(
                                     color = SurfaceElevated,
                                     border = BorderStroke(1.dp, BorderHairline),
