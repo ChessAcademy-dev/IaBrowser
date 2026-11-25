@@ -15,7 +15,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Locate Android project root and ensure settings.gradle.kts
+      - name: Locate Android project root and ensure Gradle config
         run: |
           rm -f $'\u200bsettings.gradle.kts' $'\u200bREADME.md'
           if [ -f "app/build.gradle.kts" ]; then
@@ -60,6 +60,13 @@ jobs:
 
           rootProject.name = "IaBrowser"
           include(":app")
+          EOF
+
+          cat << 'EOF' > "$PROJ_DIR/gradle.properties"
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          android.nonTransitiveRClass=true
+          kotlin.code.style=official
           EOF
 
       - name: Set up JDK 17
