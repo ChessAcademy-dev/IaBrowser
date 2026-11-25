@@ -26,29 +26,22 @@ jobs:
         with:
           gradle-version: '8.10.2'
 
-      - name: Ensure Gradle wrapper exists
-        run: |
-          if [ ! -f ./gradlew ]; then
-            gradle wrapper --gradle-version 8.10.2 --distribution-type bin
-          fi
-          chmod +x ./gradlew
-
       - name: Run unit tests (Blocker & E2EE Crypto)
-        run: ./gradlew testDebugUnitTest --stacktrace
+        run: gradle testDebugUnitTest --stacktrace
 
       - name: Assemble Debug & Release APKs
-        run: ./gradlew assembleDebug assembleRelease --stacktrace
+        run: gradle assembleDebug assembleRelease --stacktrace
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
           name: aegis-browser-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          path: "**/app/build/outputs/apk/debug/*.apk"
           if-no-files-found: error
 
       - name: Upload Release APK
         uses: actions/upload-artifact@v4
         with:
           name: aegis-browser-release-apk
-          path: app/build/outputs/apk/release/*.apk
+          path: "**/app/build/outputs/apk/release/*.apk"
           if-no-files-found: error
