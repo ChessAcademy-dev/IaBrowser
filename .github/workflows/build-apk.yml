@@ -15,9 +15,52 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Remove stray zero-width-space files if present
+      - name: Locate Android project root and ensure settings.gradle.kts
         run: |
           rm -f $'\u200bsettings.gradle.kts' $'\u200bREADME.md'
+          if [ -f "app/build.gradle.kts" ]; then
+            PROJ_DIR="."
+          else
+            FOUND_APP_GRADLE=$(find . -maxdepth 3 -path "*/app/build.gradle.kts" | head -n 1)
+            if [ -z "$FOUND_APP_GRADLE" ]; then
+              echo "ERROR: Could not find app/build.gradle.kts in repository"
+              ls -la
+              exit 1
+            fi
+            PROJ_DIR=$(dirname "$(dirname "$FOUND_APP_GRADLE")")
+          fi
+          echo "Using project directory: $PROJ_DIR"
+          echo "PROJ_DIR=$PROJ_DIR" >> "$GITHUB_ENV"
+
+          cat << 'EOF' > "$PROJ_DIR/settings.gradle.kts"
+          pluginManagement {
+              repositories {
+                  maven { url = uri("https://dl.google.com/dl/android/maven2/") }
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+              resolutionStrategy {
+                  eachPlugin {
+                      if (requested.id.namespace == "com.android" || requested.id.id.startsWith("com.android.")) {
+                          useModule("com.android.tools.build:gradle:${requested.version}")
+                      }
+                  }
+              }
+          }
+
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)
+              repositories {
+                  maven { url = uri("https://dl.google.com/dl/android/maven2/") }
+                  google()
+                  mavenCentral()
+              }
+          }
+
+          rootProject.name = "IaBrowser"
+          include(":app")
+          EOF
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -61,6 +104,7 @@ jobs:
           EOF
 
       - name: Run unit tests (Blocker & E2EE Crypto)
+        working-directory: ${{ env.PROJ_DIR }}
         run: |
           for attempt in 1 2 3; do
             if gradle :app:testDebugUnitTest --stacktrace; then
@@ -72,6 +116,7 @@ jobs:
           exit 1
 
       - name: Assemble Debug & Release APKs
+        working-directory: ${{ env.PROJ_DIR }}
         run: |
           for attempt in 1 2 3; do
             if gradle :app:assembleDebug :app:assembleRelease --stacktrace; then
