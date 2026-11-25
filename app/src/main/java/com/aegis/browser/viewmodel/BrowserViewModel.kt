@@ -47,13 +47,30 @@ data class BrowserUiState(
 class BrowserViewModel(application: Application) : AndroidViewModel(application) {
 
     val adBlocker = AdBlockerEngine()
-    private val encryptedStore = EncryptedStore(application)
+    private val encryptedStore: EncryptedStore? = runCatching {
+        EncryptedStore(application)
+    }.getOrNull()
     private var activePassphrase: CharArray? = null
+
+    private val initialVaultExists: Boolean = runCatching {
+        encryptedStore?.vaultExists() ?: false
+    }.getOrDefault(false)
+
+    private val initialFingerprint: String = runCatching {
+        encryptedStore?.getKeyFingerprint() ?: ""
+    }.getOrDefault("")
+
+    private val initialBanner: String? = if (encryptedStore == null) {
+        "Vault storage unavailable on startup"
+    } else {
+        null
+    }
 
     private val _uiState = MutableStateFlow(
         BrowserUiState(
-            vaultExistsOnDisk = encryptedStore.vaultExists(),
-            keyFingerprint = encryptedStore.getKeyFingerprint()
+            vaultExistsOnDisk = initialVaultExists,
+            keyFingerprint = initialFingerprint,
+            statusBanner = initialBanner
         )
     )
     val uiState: StateFlow<BrowserUiState> = _uiState.asStateFlow()
@@ -172,7 +189,6 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         persistVaultAsync()
     }
 
-    // Tab Management
     fun addTab(url: String = "about:blank") {
         val newTab = BrowserTab(url = url)
         _uiState.update { state ->
@@ -219,7 +235,6 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         persistVaultAsync()
     }
 
-    // Bookmarks & Encrypted Notes
     fun toggleBookmarkCurrentPage() {
         val tab = _uiState.value.activeTab
         if (tab.url == "about:blank") return
@@ -252,8 +267,12 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         persistVaultAsync()
     }
 
-    // E2EE Vault Operations
     fun unlockOrInitializeVault(passphraseInput: String, onResult: (Boolean, String?) -> Unit) {
+        val store = encryptedStore
+        if (store == null) {
+            onResult(false, "Encrypted vault is unavailable on this device")
+            return
+        }
         if (passphraseInput.length < 8) {
             onResult(false, "Passphrase must be at least 8 characters")
             return
@@ -261,15 +280,15 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val chars = passphraseInput.toCharArray()
-                val loaded = if (encryptedStore.vaultExists()) {
-                    encryptedStore.unlockAndLoad(chars)
+                val loaded = if (store.vaultExists()) {
+                    store.unlockAndLoad(chars)
                 } else {
                     val initial = VaultPayload(
                         tabs = _uiState.value.tabs,
                         customBlocklist = adBlocker.getCustomBlocklist(),
                         allowlist = adBlocker.getAllowlist()
                     )
-                    encryptedStore.saveEncrypted(initial, chars)
+                    store.saveEncrypted(initial, chars)
                     initial
                 }
 
@@ -313,9 +332,16 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun exportCiphertextJson(): String? = encryptedStore.exportCiphertextEnvelope()
+    fun exportCiphertextJson(): String? = runCatching {
+        encryptedStore?.exportCiphertextEnvelope()
+    }.getOrNull()
 
     fun importCiphertextJson(envelopeJson: String, onResult: (Boolean, String?) -> Unit) {
+        val store = encryptedStore
+        if (store == null) {
+            onResult(false, "Encrypted vault is unavailable on this device")
+            return
+        }
         val pass = activePassphrase
         if (pass == null) {
             onResult(false, "Unlock vault first before importing ciphertext")
@@ -323,7 +349,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         }
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val payload = encryptedStore.importCiphertextEnvelope(envelopeJson, pass)
+                val payload = store.importCiphertextEnvelope(envelopeJson, pass)
                 adBlocker.setRules(payload.customBlocklist, payload.allowlist)
                 _uiState.update {
                     it.copy(
@@ -343,6 +369,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     }
 
     private fun persistVaultAsync() {
+        val store = encryptedStore ?: return
         val pass = activePassphrase ?: return
         val snapshot = _uiState.value
         val payload = VaultPayload(
@@ -354,7 +381,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             allowlist = adBlocker.getAllowlist()
         )
         viewModelScope.launch(Dispatchers.IO) {
-            runCatching { encryptedStore.saveEncrypted(payload, pass) }
+            runCatching { store.saveEncrypted(payload, pass) }
         }
     }
 
